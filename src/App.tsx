@@ -1,9 +1,6 @@
 import React, { useState, useRef } from 'react';
-import { GoogleGenAI, Type } from '@google/genai';
 import { UploadCloud, Image as ImageIcon, Loader2, AlertTriangle, CheckCircle2, HelpCircle, UtensilsCrossed, Info, Lightbulb, ShoppingCart, ListOrdered, Plus, X, Edit2, Zap, Flame, Leaf, Scale, Activity } from 'lucide-react';
 import { motion, AnimatePresence } from 'motion/react';
-
-const ai = new GoogleGenAI({ apiKey: process.env.GEMINI_API_KEY });
 
 interface Ingredient {
   id: string;
@@ -30,6 +27,14 @@ interface Dish {
 }
 
 type Step = 'upload' | 'review' | 'results';
+type Confidence = Ingredient['confidence'];
+
+const normalizeConfidence = (value: unknown): Confidence => {
+  if (value === 'высокая' || value === 'средняя' || value === 'низкая') {
+    return value;
+  }
+  return 'низкая';
+};
 
 export default function App() {
   const [selectedFile, setSelectedFile] = useState<File | null>(null);
@@ -88,45 +93,28 @@ export default function App() {
     try {
       const base64Image = await fileToBase64(selectedFile);
 
-      const response = await ai.models.generateContent({
-        model: "gemini-3-flash-preview",
-        contents: [
-          {
-            inlineData: {
-              data: base64Image,
-              mimeType: selectedFile.type,
-            }
-          },
-          "Проанализируй это фото продуктов. Определи, какие продукты ты видишь. Верни только список продуктов с указанием уверенности ('высокая', 'средняя', 'низкая')."
-        ],
-        config: {
-          responseMimeType: "application/json",
-          responseSchema: {
-            type: Type.OBJECT,
-            properties: {
-              ingredients: {
-                type: Type.ARRAY,
-                items: {
-                  type: Type.OBJECT,
-                  properties: {
-                    name: { type: Type.STRING, description: "Название продукта" },
-                    confidence: { type: Type.STRING, description: "Уверенность: 'высокая', 'средняя', 'низкая'" }
-                  },
-                  required: ["name", "confidence"]
-                }
-              }
-            },
-            required: ["ingredients"]
-          }
-        }
+      const response = await fetch('/api/analyze-products', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({
+          imageBase64: base64Image,
+          mimeType: selectedFile.type,
+        }),
       });
 
-      if (response.text) {
-        const parsedResult = JSON.parse(response.text);
+      if (!response.ok) {
+        throw new Error('Backend analyze request failed');
+      }
+
+      const parsedResult = await response.json();
+      if (Array.isArray(parsedResult.ingredients)) {
         const ingredientsWithIds = parsedResult.ingredients.map((ing: any) => ({
-          ...ing,
+          name: String(ing.name ?? '').trim(),
+          confidence: normalizeConfidence(ing.confidence),
           id: Date.now().toString() + Math.random().toString()
-        }));
+        })).filter((ing: Ingredient) => ing.name.length > 0);
         setIngredients(ingredientsWithIds);
         setStep('review');
       } else {
@@ -150,62 +138,23 @@ export default function App() {
     setError(null);
 
     try {
-      const ingredientsList = ingredients.map(i => i.name).join(', ');
-      
-      let modePrompt = '';
-      if (mode === 'fast') {
-        modePrompt = 'Режим "Быстро": предлагай блюда с минимальным количеством шагов и максимально простой готовкой.';
-      } else if (mode === 'hearty') {
-        modePrompt = 'Режим "Сытно": предлагай более плотные, калорийные и насыщенные блюда.';
-      } else if (mode === 'light') {
-        modePrompt = 'Режим "Полегче": предлагай более легкие и менее тяжелые варианты из доступных продуктов.';
-      }
-
-      const response = await ai.models.generateContent({
-        model: "gemini-3-flash-preview",
-        contents: [
-          `У меня есть следующие продукты: ${ingredientsList}. Предложи 1-4 простых, домашних блюда, которые можно приготовить из этих продуктов.\n\n${modePrompt}\n\nПравила:\n1. Блюда должны быть бытовыми и реалистичными для обычной кухни, без экзотики.\n2. Если набор продуктов странный или недостаточный, предложи меньше блюд, но более реалистичных.\n3. Для каждого блюда укажи: какие продукты из моего списка используются, каких базовых продуктов может не хватать, почему это блюдо подходит, 3-5 коротких шагов приготовления.\n4. Для каждого блюда рассчитай КБЖУ строго на 100 г готового блюда. Используй данные из баз USDA FoodData Central или Open Food Facts. Если точных данных нет, используй ближайшее совпадение и установи флаг isApproximated: true.`
-        ],
-        config: {
-          responseMimeType: "application/json",
-          responseSchema: {
-            type: Type.OBJECT,
-            properties: {
-              dishes: {
-                type: Type.ARRAY,
-                items: {
-                  type: Type.OBJECT,
-                  properties: {
-                    name: { type: Type.STRING, description: "Название блюда" },
-                    description: { type: Type.STRING, description: "Краткое описание блюда" },
-                    usedIngredients: { type: Type.ARRAY, items: { type: Type.STRING }, description: "Список используемых продуктов из моего списка" },
-                    missingIngredients: { type: Type.ARRAY, items: { type: Type.STRING }, description: "Список продуктов, которых не хватает (базовые)" },
-                    reasoning: { type: Type.STRING, description: "Почему это блюдо подходит под данный набор продуктов" },
-                    steps: { type: Type.ARRAY, items: { type: Type.STRING }, description: "3-5 коротких шагов приготовления" },
-                    macros100g: {
-                      type: Type.OBJECT,
-                      description: "КБЖУ строго на 100 г готового блюда",
-                      properties: {
-                        calories: { type: Type.NUMBER, description: "Калории на 100 г" },
-                        protein: { type: Type.NUMBER, description: "Белки (г) на 100 г" },
-                        fat: { type: Type.NUMBER, description: "Жиры (г) на 100 г" },
-                        carbs: { type: Type.NUMBER, description: "Углеводы (г) на 100 г" }
-                      },
-                      required: ["calories", "protein", "fat", "carbs"]
-                    },
-                    isApproximated: { type: Type.BOOLEAN, description: "Установлен в true, если расчет выполнен по ближайшему совпадению" }
-                  },
-                  required: ["name", "description", "usedIngredients", "missingIngredients", "reasoning", "steps", "macros100g", "isApproximated"]
-                }
-              }
-            },
-            required: ["dishes"]
-          }
-        }
+      const response = await fetch('/api/generate-recipes', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({
+          ingredients: ingredients.map((item) => item.name),
+          mode,
+        }),
       });
 
-      if (response.text) {
-        const parsedResult = JSON.parse(response.text);
+      if (!response.ok) {
+        throw new Error('Backend recipes request failed');
+      }
+
+      const parsedResult = await response.json();
+      if (Array.isArray(parsedResult.dishes)) {
         setDishes(parsedResult.dishes);
         setIsListModified(false);
         setStep('results');
