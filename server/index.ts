@@ -1,6 +1,6 @@
 import express from 'express';
-import { analyzeProductsFromImage, generateDishesFromIngredients } from './openaiService';
-import type { RecommendationMode } from './types';
+import { analyzeProductsFromImage, generateDishesFromIngredients } from './openaiService.js';
+import type { RecommendationMode } from './types.js';
 
 const app = express();
 const port = Number(process.env.API_PORT ?? 8787);

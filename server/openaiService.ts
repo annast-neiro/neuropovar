@@ -1,4 +1,4 @@
-import type { Dish, Ingredient, RecommendationMode } from './types';
+import type { Dish, Ingredient, RecommendationMode } from './types.js';
 
 const OPENAI_RESPONSES_URL = 'https://api.openai.com/v1/responses';
 const confidenceSchemaValues = ['высокая', 'средняя', 'низкая'];

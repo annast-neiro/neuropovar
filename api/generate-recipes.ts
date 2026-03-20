@@ -1,5 +1,5 @@
-import { generateDishesFromIngredients } from '../server/openaiService';
-import type { RecommendationMode } from '../server/types';
+import { generateDishesFromIngredients } from '../server/openaiService.js';
+import type { RecommendationMode } from '../server/types.js';
 
 type ApiRequest = { method?: string; body?: Record<string, unknown> };
 type ApiResponse = { status: (code: number) => { json: (payload: unknown) => void } };

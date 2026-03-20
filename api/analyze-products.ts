@@ -1,4 +1,4 @@
-import { analyzeProductsFromImage } from '../server/openaiService';
+import { analyzeProductsFromImage } from '../server/openaiService.js';
 
 type ApiRequest = { method?: string; body?: Record<string, unknown> };
 type ApiResponse = { status: (code: number) => { json: (payload: unknown) => void } };
