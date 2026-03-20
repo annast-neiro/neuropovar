@@ -84,7 +84,123 @@ const getApiKey = () => {
   return apiKey;
 };
 
-const createResponse = async (payload: Record<string, unknown>) => {
+const toShortJson = (value: unknown, maxLength = 1500) => {
+  try {
+    return JSON.stringify(value).slice(0, maxLength);
+  } catch {
+    return '[unserializable response]';
+  }
+};
+
+const stripMarkdownCodeFence = (text: string) => {
+  const trimmed = text.trim();
+  if (!trimmed.startsWith('```')) return trimmed;
+
+  const withoutStart = trimmed.replace(/^```[a-zA-Z]*\n?/, '');
+  return withoutStart.replace(/```$/, '').trim();
+};
+
+const extractFirstJsonBlock = (text: string): string | null => {
+  const normalized = stripMarkdownCodeFence(text);
+  const objectStart = normalized.indexOf('{');
+  const arrayStart = normalized.indexOf('[');
+  const startCandidates = [objectStart, arrayStart].filter((index) => index >= 0);
+
+  if (startCandidates.length === 0) {
+    return null;
+  }
+
+  const start = Math.min(...startCandidates);
+  const stack: string[] = [];
+
+  for (let i = start; i < normalized.length; i += 1) {
+    const char = normalized[i];
+    if (char === '{' || char === '[') {
+      stack.push(char);
+    } else if (char === '}' || char === ']') {
+      const last = stack[stack.length - 1];
+      const isMatch = (last === '{' && char === '}') || (last === '[' && char === ']');
+      if (!isMatch) return null;
+      stack.pop();
+      if (stack.length === 0) {
+        return normalized.slice(start, i + 1);
+      }
+    }
+  }
+
+  return null;
+};
+
+const collectResponseCandidates = (responseJson: Record<string, unknown>): unknown[] => {
+  const candidates: unknown[] = [];
+
+  if (typeof responseJson.output_text === 'string' && responseJson.output_text.trim().length > 0) {
+    candidates.push(responseJson.output_text);
+  }
+
+  const output = Array.isArray(responseJson.output) ? responseJson.output : [];
+  for (const item of output) {
+    if (!item || typeof item !== 'object') continue;
+    const typedItem = item as Record<string, unknown>;
+
+    if (typeof typedItem.text === 'string' && typedItem.text.trim().length > 0) {
+      candidates.push(typedItem.text);
+    }
+
+    if (typedItem.arguments && typeof typedItem.arguments === 'string') {
+      candidates.push(typedItem.arguments);
+    }
+
+    const content = Array.isArray(typedItem.content) ? typedItem.content : [];
+    for (const part of content) {
+      if (!part || typeof part !== 'object') continue;
+      const typedPart = part as Record<string, unknown>;
+
+      if (typeof typedPart.text === 'string' && typedPart.text.trim().length > 0) {
+        candidates.push(typedPart.text);
+      }
+
+      if (typedPart.json && typeof typedPart.json === 'object') {
+        candidates.push(typedPart.json);
+      }
+    }
+  }
+
+  return candidates;
+};
+
+const parseJsonFromCandidates = (candidates: unknown[]): Record<string, unknown> | null => {
+  for (const candidate of candidates) {
+    if (candidate && typeof candidate === 'object' && !Array.isArray(candidate)) {
+      return candidate as Record<string, unknown>;
+    }
+
+    if (typeof candidate !== 'string') continue;
+
+    const normalized = stripMarkdownCodeFence(candidate);
+    try {
+      const directParsed = JSON.parse(normalized) as unknown;
+      if (directParsed && typeof directParsed === 'object' && !Array.isArray(directParsed)) {
+        return directParsed as Record<string, unknown>;
+      }
+    } catch {
+      const extracted = extractFirstJsonBlock(normalized);
+      if (!extracted) continue;
+      try {
+        const fallbackParsed = JSON.parse(extracted) as unknown;
+        if (fallbackParsed && typeof fallbackParsed === 'object' && !Array.isArray(fallbackParsed)) {
+          return fallbackParsed as Record<string, unknown>;
+        }
+      } catch {
+        continue;
+      }
+    }
+  }
+
+  return null;
+};
+
+const createResponse = async (payload: Record<string, unknown>, requestName: string) => {
   const response = await fetch(OPENAI_RESPONSES_URL, {
     method: 'POST',
     headers: {
@@ -99,13 +215,29 @@ const createResponse = async (payload: Record<string, unknown>) => {
     throw new Error(`OpenAI request failed with ${response.status}: ${details}`);
   }
 
-  const json = await response.json() as { output_text?: string };
+  const json = await response.json() as Record<string, unknown>;
+  const candidates = collectResponseCandidates(json);
+  const parsed = parseJsonFromCandidates(candidates);
 
-  if (!json.output_text) {
-    throw new Error('Model returned an empty JSON payload');
+  if (!parsed) {
+    const diagnostic = toShortJson({
+      requestName,
+      hasOutputText: typeof json.output_text === 'string' && json.output_text.length > 0,
+      candidatesCount: candidates.length,
+      rawResponse: json,
+    });
+    console.error(`OpenAI parse failure (${requestName}): ${diagnostic}`);
+    throw new Error(`OpenAI returned an unsupported response format for ${requestName}`);
   }
 
-  return JSON.parse(json.output_text) as Record<string, unknown>;
+  return parsed;
+};
+
+const normalizeConfidence = (value: unknown): Ingredient['confidence'] => {
+  if (value === 'высокая' || value === 'средняя' || value === 'низкая' || value === 'ручная') {
+    return value;
+  }
+  return 'низкая';
 };
 
 export const analyzeProductsFromImage = async (imageBase64: string, mimeType: string): Promise<Ingredient[]> => {
@@ -114,14 +246,17 @@ export const analyzeProductsFromImage = async (imageBase64: string, mimeType: st
     input: [
       {
         role: 'system',
-        content: [{ type: 'input_text', text: 'Ты распознаешь продукты на фото и возвращаешь строгий JSON по схеме.' }],
+        content: [{
+          type: 'input_text',
+          text: 'Ты распознаешь продукты на фото и отвечаешь только JSON-объектом без markdown и пояснений.',
+        }],
       },
       {
         role: 'user',
         content: [
           {
             type: 'input_text',
-            text: 'Проанализируй фото продуктов. Верни только реальные продукты питания. Не добавляй кухонные предметы, упаковку или бренды.',
+            text: 'Проанализируй фото продуктов. Верни ТОЛЬКО JSON формата {"ingredients":[{"name":"...","confidence":"высокая|средняя|низкая"}]}. Не добавляй кухонные предметы, упаковку или бренды.',
           },
           {
             type: 'input_image',
@@ -138,9 +273,18 @@ export const analyzeProductsFromImage = async (imageBase64: string, mimeType: st
         schema: recognizedIngredientsSchema,
       },
     },
-  });
+  }, 'analyze-products');
 
-  return (parsed.ingredients as Ingredient[]) ?? [];
+  const ingredientsRaw = Array.isArray(parsed.ingredients) ? parsed.ingredients : [];
+  return ingredientsRaw
+    .map((item) => {
+      const typedItem = item as Record<string, unknown>;
+      return {
+        name: String(typedItem.name ?? '').trim(),
+        confidence: normalizeConfidence(typedItem.confidence),
+      } as Ingredient;
+    })
+    .filter((item) => item.name.length > 0);
 };
 
 export const generateDishesFromIngredients = async (
@@ -179,7 +323,7 @@ export const generateDishesFromIngredients = async (
         schema: dishesSchema,
       },
     },
-  });
+  }, 'generate-recipes');
 
   return (parsed.dishes as Dish[]) ?? [];
 };
