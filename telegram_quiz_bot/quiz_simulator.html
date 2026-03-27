@@ -1,0 +1,389 @@
+<!doctype html>
+<html lang="ru">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Симулятор Telegram-бота-квиза</title>
+  <style>
+    :root {
+      --tg-bg: #18222d;
+      --chat-bg: #0f1720;
+      --bubble-bot: #ffffff;
+      --bubble-user: #2b5278;
+      --text-bot: #111827;
+      --text-user: #f8fafc;
+      --accent: #3390ec;
+      --option-bg: #e8f2ff;
+      --option-border: #bfdbfe;
+      --option-text: #0f4c81;
+    }
+
+    * { box-sizing: border-box; }
+
+    body {
+      margin: 0;
+      font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+      background: radial-gradient(circle at 20% 20%, #1f3143 0%, #0f1720 60%, #0b1219 100%);
+      min-height: 100vh;
+      display: grid;
+      place-items: center;
+      color: #e5e7eb;
+      padding: 16px;
+    }
+
+    .phone {
+      width: min(420px, 100%);
+      height: min(840px, 92vh);
+      background: var(--tg-bg);
+      border-radius: 24px;
+      overflow: hidden;
+      border: 1px solid rgba(255, 255, 255, 0.12);
+      box-shadow: 0 20px 50px rgba(0, 0, 0, 0.45);
+      display: flex;
+      flex-direction: column;
+    }
+
+    .topbar {
+      height: 64px;
+      background: #1f2c38;
+      display: flex;
+      align-items: center;
+      padding: 0 14px;
+      border-bottom: 1px solid rgba(255, 255, 255, 0.08);
+      gap: 10px;
+    }
+
+    .avatar {
+      width: 38px;
+      height: 38px;
+      border-radius: 50%;
+      background: linear-gradient(140deg, #38bdf8, #2563eb);
+      display: grid;
+      place-items: center;
+      font-weight: 700;
+      color: #fff;
+      font-size: 14px;
+    }
+
+    .title { line-height: 1.2; }
+    .title strong { display: block; font-size: 14px; }
+    .title span { font-size: 12px; color: #9fb3c8; }
+
+    .chat {
+      background: var(--chat-bg);
+      padding: 14px;
+      flex: 1;
+      overflow-y: auto;
+      display: flex;
+      flex-direction: column;
+      gap: 8px;
+    }
+
+    .row {
+      display: flex;
+      max-width: 90%;
+    }
+
+    .row.bot { align-self: flex-start; }
+    .row.user { align-self: flex-end; }
+
+    .bubble {
+      border-radius: 16px;
+      padding: 10px 12px;
+      font-size: 14px;
+      line-height: 1.35;
+      white-space: pre-wrap;
+      box-shadow: 0 2px 8px rgba(0, 0, 0, 0.18);
+    }
+
+    .row.bot .bubble {
+      background: var(--bubble-bot);
+      color: var(--text-bot);
+      border-top-left-radius: 6px;
+    }
+
+    .row.user .bubble {
+      background: var(--bubble-user);
+      color: var(--text-user);
+      border-top-right-radius: 6px;
+    }
+
+    .options {
+      margin: 4px 0 8px;
+      display: flex;
+      flex-direction: column;
+      gap: 8px;
+      max-width: 92%;
+      align-self: flex-start;
+    }
+
+    .option-btn {
+      width: 100%;
+      text-align: left;
+      border: 1px solid var(--option-border);
+      background: var(--option-bg);
+      color: var(--option-text);
+      border-radius: 12px;
+      padding: 10px 12px;
+      font-size: 14px;
+      cursor: pointer;
+      transition: transform 0.06s ease, filter 0.18s ease;
+    }
+
+    .option-btn:hover { filter: brightness(0.98); }
+    .option-btn:active { transform: scale(0.99); }
+
+    .input-fake {
+      height: 58px;
+      background: #1f2c38;
+      border-top: 1px solid rgba(255, 255, 255, 0.08);
+      display: flex;
+      align-items: center;
+      padding: 0 12px;
+      gap: 8px;
+    }
+
+    .input-box {
+      flex: 1;
+      background: #2b3b4a;
+      border-radius: 22px;
+      height: 40px;
+      display: flex;
+      align-items: center;
+      padding: 0 14px;
+      color: #9fb3c8;
+      font-size: 13px;
+    }
+
+    .send {
+      width: 40px;
+      height: 40px;
+      border-radius: 50%;
+      border: 0;
+      background: var(--accent);
+      color: #fff;
+      font-weight: 700;
+      cursor: default;
+    }
+  </style>
+</head>
+<body>
+  <main class="phone" aria-label="Симулятор Telegram чата">
+    <header class="topbar">
+      <div class="avatar">QZ</div>
+      <div class="title">
+        <strong>Quiz Helper Bot</strong>
+        <span>online</span>
+      </div>
+    </header>
+
+    <section id="chat" class="chat"></section>
+
+    <footer class="input-fake" aria-hidden="true">
+      <div class="input-box">Сообщение…</div>
+      <button class="send">➤</button>
+    </footer>
+  </main>
+
+  <script>
+    const chat = document.getElementById('chat');
+
+    const QUESTIONS = [
+      {
+        id: 'q1',
+        text: '1/3. Какая задача для вас сейчас главная?',
+        options: [
+          { value: 'clients', label: 'Привлекать новых клиентов' },
+          { value: 'automation', label: 'Автоматизировать общение и заявки' },
+          { value: 'tool', label: 'Запустить полезный онлайн-инструмент' },
+          { value: 'unclear', label: 'Понять, что мне вообще нужно' },
+        ],
+      },
+      {
+        id: 'q2',
+        text: '2/3. Что для вас сейчас в приоритете?',
+        options: [
+          { value: 'speed', label: 'Быстрый запуск' },
+          { value: 'image', label: 'Профессиональный имидж' },
+          { value: 'time', label: 'Экономия времени в рутине' },
+          { value: 'validate', label: 'Проверить идею с минимальными рисками' },
+        ],
+      },
+      {
+        id: 'q3',
+        text: '3/3. Что у вас уже есть?',
+        options: [
+          { value: 'idea', label: 'Есть только идея' },
+          { value: 'materials', label: 'Есть материалы (тексты/услуги/описание)' },
+          { value: 'tg_audience', label: 'Есть активная аудитория в Telegram' },
+          { value: 'chaos', label: 'Есть запросы от клиентов, но всё хаотично' },
+        ],
+      },
+    ];
+
+    let currentStep = -1;
+    let answers = {};
+
+    function addMessage(text, side = 'bot') {
+      const row = document.createElement('div');
+      row.className = `row ${side}`;
+      const bubble = document.createElement('div');
+      bubble.className = 'bubble';
+      bubble.textContent = text;
+      row.appendChild(bubble);
+      chat.appendChild(row);
+      chat.scrollTop = chat.scrollHeight;
+    }
+
+    function clearOptions() {
+      document.querySelectorAll('.options').forEach((el) => el.remove());
+    }
+
+    function showOptions(options, onClick) {
+      clearOptions();
+      const wrap = document.createElement('div');
+      wrap.className = 'options';
+
+      options.forEach((option) => {
+        const btn = document.createElement('button');
+        btn.className = 'option-btn';
+        btn.type = 'button';
+        btn.textContent = option.label;
+        btn.addEventListener('click', () => onClick(option));
+        wrap.appendChild(btn);
+      });
+
+      chat.appendChild(wrap);
+      chat.scrollTop = chat.scrollHeight;
+    }
+
+    function buildRecommendation(q1, q2, q3) {
+      if (q1 === 'unclear') {
+        return {
+          solution: 'Консультация',
+          why: 'Пока не хватает ясности по формату, и это нормально на старте.',
+          step: 'Коротко созвонимся и определим самый простой первый шаг.',
+        };
+      }
+      if (q2 === 'validate' && q3 === 'idea') {
+        return {
+          solution: 'Консультация',
+          why: 'Есть идея, но пока мало вводных для уверенного запуска.',
+          step: 'Уточним гипотезу и соберем понятный план на ближайшие шаги.',
+        };
+      }
+      if (q1 === 'automation') {
+        return {
+          solution: 'Telegram-бот',
+          why: 'Вам важно автоматизировать общение и заявки — бот это закрывает лучше всего.',
+          step: 'Выделите 3 частых сценария и сделайте первую версию бота.',
+        };
+      }
+      if (q2 === 'time' && (q3 === 'tg_audience' || q3 === 'chaos')) {
+        return {
+          solution: 'Telegram-бот',
+          why: 'Есть повторяющиеся обращения, и бот поможет снять рутину.',
+          step: 'Соберите простой сценарий: приветствие, FAQ и сбор заявки.',
+        };
+      }
+      if (q1 === 'tool') {
+        return {
+          solution: 'Мини-сервис',
+          why: 'Вам нужен рабочий инструмент с конкретной полезной функцией.',
+          step: 'Опишите одну ключевую функцию и запустите мини-MVP.',
+        };
+      }
+      if (q2 === 'validate' && q3 !== 'idea') {
+        return {
+          solution: 'Мини-сервис',
+          why: 'У вас уже есть база, поэтому можно быстро проверить идею на практике.',
+          step: 'Выберите метрику успеха и запустите пилотную версию.',
+        };
+      }
+      if (q1 === 'clients' && q2 === 'image') {
+        return {
+          solution: 'Сайт-визитка',
+          why: 'Нужно понятно показать себя и услуги — сайт-визитка подойдет лучше всего.',
+          step: 'Соберите страницу: о вас, услуги, примеры и контакты.',
+        };
+      }
+      if (q1 === 'clients' && q3 === 'materials') {
+        return {
+          solution: 'Сайт-визитка',
+          why: 'Материалы уже есть, значит можно быстро запустить аккуратную витрину услуг.',
+          step: 'Подготовьте тексты и опубликуйте первую версию страницы.',
+        };
+      }
+
+      return {
+        solution: 'Консультация',
+        why: 'Чтобы не ошибиться со стартом, лучше сначала уточнить фокус задачи.',
+        step: 'На коротком созвоне выберем самый рациональный формат запуска.',
+      };
+    }
+
+    function askNextQuestion() {
+      currentStep += 1;
+      if (currentStep >= QUESTIONS.length) {
+        showResult();
+        return;
+      }
+
+      const q = QUESTIONS[currentStep];
+      addMessage(q.text, 'bot');
+      showOptions(q.options, (option) => {
+        addMessage(option.label, 'user');
+        answers[q.id] = option.value;
+        askNextQuestion();
+      });
+    }
+
+    function showResult() {
+      clearOptions();
+      const rec = buildRecommendation(answers.q1, answers.q2, answers.q3);
+
+      addMessage(
+        `✅ Рекомендация: ${rec.solution}\n\n` +
+        `Почему: ${rec.why}\n\n` +
+        `Следующий шаг: ${rec.step}`,
+        'bot'
+      );
+
+      showOptions(
+        [
+          { value: 'restart', label: 'Пройти заново' },
+          { value: 'consult', label: 'Получить консультацию' },
+        ],
+        (action) => {
+          if (action.value === 'restart') {
+            addMessage('Пройти заново', 'user');
+            startQuiz();
+            return;
+          }
+
+          addMessage('Получить консультацию', 'user');
+          addMessage('Отлично! Напишите: @your_username', 'bot');
+        }
+      );
+    }
+
+    function showStartScreen() {
+      addMessage('Привет! 👋\nПомогу выбрать, что лучше запустить под вашу задачу.\nГотовы начать?', 'bot');
+      showOptions([{ value: 'start', label: 'Начать' }], () => {
+        addMessage('Начать', 'user');
+        askNextQuestion();
+      });
+    }
+
+    function startQuiz() {
+      clearOptions();
+      currentStep = -1;
+      answers = {};
+      addMessage('Давайте заново 🙂', 'bot');
+      askNextQuestion();
+    }
+
+    showStartScreen();
+  </script>
+</body>
+</html>
